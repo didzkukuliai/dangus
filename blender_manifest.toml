@@ -1,0 +1,15 @@
+schema_version = "1.0.0"
+id = "dangus"
+version = "1.0.0"
+name = "dangus"
+tagline = "Create sky domes from different layers"
+maintainer = "didzkukuliai"
+type = "add-on"
+blender_version_min = "5.0.0"
+license = ["SPDX:GPL-3.0-or-later"]
+
+[permissions]
+files = "Save and load Edge Mix presets in the extension's user folder"
+
+[build]
+paths_exclude_pattern = ["__pycache__/", "*.pyc"]
