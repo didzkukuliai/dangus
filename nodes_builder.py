@@ -11,7 +11,7 @@ from .utils import BLEND_OCCLUSION, PREFIX, SUN_KINDS, scene_fps, sk
 TOP_NAME = "dangus"
 SKY_NODE = PREFIX + "Sky"
 TWO_PI = 2.0 * math.pi
-VERSION = 14
+VERSION = 1
 FLAG = "dangus"
 TAG = "dangus_uid"
 UI_ONLY = {"rna_type", "show_expanded", "map_scale_lock", "active_item", "active_mask", "active_layer",
@@ -39,8 +39,17 @@ READABLE = {
     "QSep": "Split image coordinates", "SunColor": "Sun colour", "SunLocal": "Sun-space direction",
     "TexMap": "Mapping", "SunMix": "", "Lum": "Luminance", "ModMix": "Modifier mix",
     "FogFade": "Fog fade", "MaskNoise": "Mask: Noise", "MaskCells": "Mask: Cells",
-    "SunLayer": "Sun layer", "Edge": "Edge", "Coverage": "Coverage",
+    "SunLayer": "Sun layer", "Edge": "Edge", "Coverage": "Coverage", "EdgeSep": "Split the offset",
+    "FromCentre": "Offset from the centre", "Feather": "Feather the edges (Softness)",
+    "GlowReach": "Along this direction", "GlowImg": "Glow sample", "GlowSum": "Add up the glow",
+    "SunImgGlowTint": "Glow colour", "GlowSide": "Sideways", "GlowRay": "Glow direction",
+    "SunPlaneSep": "Split the sun plane",
 }
+
+
+GLOW_TURNS = (-0.6, -0.3, 0.0, 0.3, 0.6)
+GLOW_STEPS = 3
+GLOW_SAMPLES = len(GLOW_TURNS) * GLOW_STEPS
 
 
 class Mismatch(Exception):
@@ -437,6 +446,9 @@ class Tree:
 
     def texture(self, it, name, coords, auto_ext, alpha=True, center=False):
         img, uv = self.tex(it, name, coords, auto_ext, center)
+        return self.texture_out(it, img, uv, auto_ext, alpha)
+
+    def texture_out(self, it, img, uv, auto_ext, alpha=True):
         color, a, src = img.outputs["Color"], None, alpha_source(it)
         if alpha:
             if src == "CHANNEL":
@@ -723,11 +735,53 @@ class Tree:
         return zs, rot.outputs["Vector"]
 
     def sun_texture(self, it, a, z, t_disc):
-        q = self.V("DIVIDE", a, self.M("MAXIMUM", z, 1e-6), name="SunPlane")
-        fit = self.V("SCALE", q, 0.5 / t_disc, name="SunImgFit")
+        fit = self.V("SCALE", self.sun_plane(a, z), 0.5 / t_disc, name="SunImgFit")
         c, al = self.texture(it, "SunImg", fit, "CLIP", center=True)
         return c, self.M("MULTIPLY", self.M("MULTIPLY", al, self.M("GREATER_THAN", z, 0.0)),
                          it.opacity, label="Image coverage")
+
+    def sun_picture(self, it, a, z, L):
+        w, h = it.image.size
+        m = float(max(w, h, 1))
+        t = math.tan(min(L.sun_size / 2.0, 1.5))
+        fit_scale = (0.5 * m / (t * max(w, 1)), 0.5 * m / (t * max(h, 1)), 0.0)
+        flat = self.sun_plane(a, z)
+        img, uv = self.tex(it, "SunImg", self.V("MULTIPLY", flat, fit_scale, name="SunImgFit"),
+                           "CLIP", center=True)
+        c, al = self.texture_out(it, img, uv, "CLIP")
+        off = self.V("ABSOLUTE", self.V("SUBTRACT", uv, (0.5, 0.5, 0.0), name="FromCentre"),
+                     name="Abs")
+        sep = self.node("ShaderNodeSeparateXYZ", "EdgeSep")
+        self.put(sep.inputs[0], off)
+        edge = self.M("MAXIMUM", sep.outputs["X"], sep.outputs["Y"], label="Distance to the edge")
+        feather = self.MR(edge, 0.5, 0.5 * (1.0 - min(L.sun_softness, 1.0)) - 1e-4, 0.0, 1.0,
+                          "SMOOTHSTEP", "Feather")
+        cover = self.M("MULTIPLY", self.M("MULTIPLY", al, feather),
+                       self.M("MULTIPLY", self.M("GREATER_THAN", z, 0.0), it.opacity),
+                       label="Picture coverage")
+        direction = self.V("NORMALIZE", flat, name="Normalize")
+        side = self.V("CROSS_PRODUCT", (0.0, 0.0, 1.0), direction, name="GlowSide")
+        acc = (0.0, 0.0, 0.0)
+        for turn in GLOW_TURNS:
+            ray = self.V("MULTIPLY_ADD", side, (math.sin(turn),) * 3, self.V(
+                "SCALE", direction, math.cos(turn), name="GlowRay"), name="GlowRay")
+            for k in range(GLOW_STEPS):
+                reach = (k + 0.5) / GLOW_STEPS * t
+                at = self.V("MULTIPLY", self.V("SCALE", ray, reach, name="GlowReach"),
+                            fit_scale, name="SunImgFit")
+                sample, _uv = self.tex(it, "GlowImg", at, "CLIP", center=True)
+                acc = self.V("MULTIPLY_ADD", sample.outputs["Color"], sample.outputs["Alpha"],
+                             acc, name="GlowSum")
+        return c, cover, acc
+
+    def sun_plane(self, a, z):
+        q = self.V("DIVIDE", a, self.M("MAXIMUM", z, 1e-6), name="SunPlane")
+        sep = self.node("ShaderNodeSeparateXYZ", "SunPlaneSep")
+        self.put(sep.inputs[0], q)
+        up = self.node("ShaderNodeCombineXYZ", "SunImageUp", "Picture upright")
+        self.put(up.inputs["X"], self.M("MULTIPLY", sep.outputs["Y"], -1.0))
+        self.put(up.inputs["Y"], self.M("MULTIPLY", sep.outputs["X"], -1.0))
+        return up.outputs["Vector"]
 
     def sun_layer(self, L):
         with self.section("Where the sun is  (Position › %s)" % (
@@ -783,13 +837,14 @@ class Tree:
                 halo_amt = self.M("MULTIPLY", self.M("MULTIPLY", halo, glow), seen, label="Image glow")
             light = (0.0, 0.0, 0.0)
             for it in items:
-                with self.section("Sun image %s  (Images › Sun)" % it.image.name):
-                    c, al = self.sun_texture(it, a, z, t_disc)
+                with self.section("Sun picture %s, sized by Disc & Glow › Size; it glows "
+                                  "where it is bright  (Images › Sun)" % it.image.name):
+                    c, cover, glow_sum = self.sun_picture(it, a, z, L)
                     tint = tuple(x * it.emission for x in it.tint)
-                    avg = tuple(x * t * it.opacity for x, t in zip(average_rgb(it.image), tint))
-                    light = self.V("MULTIPLY_ADD", avg, halo_amt, light, name="SunImgGlow")
-                    al = self.M("MULTIPLY", al, disc, label="Soft edge")
-                    light = self.MIX(al, light, self.V("SCALE", self.V(
+                    glow_tint = tuple(x * it.opacity / GLOW_SAMPLES for x in tint)
+                    glow_col = self.V("MULTIPLY", glow_sum, glow_tint, name="SunImgGlowTint")
+                    light = self.V("MULTIPLY_ADD", glow_col, halo_amt, light, name="SunImgGlow")
+                    light = self.MIX(cover, light, self.V("SCALE", self.V(
                         "MULTIPLY", c, tint, name="SunImgTint"), bright, name="SunImgLight"),
                         it.blend, "SunMix")
         else:
