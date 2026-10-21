@@ -848,7 +848,7 @@ class Tree:
                         "MULTIPLY", c, tint, name="SunImgTint"), bright, name="SunImgLight"),
                         it.blend, "SunMix")
         else:
-            color = (1.0, 1.0, 1.0, 1.0)
+            color = (0.0, 0.0, 0.0, 0.0)
             for it in items:
                 if it.kind == "SUN_COLOR":
                     with self.section("Sun colour  (Images › Solid Color)"):
