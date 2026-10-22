@@ -409,9 +409,9 @@ class Tree:
             aspect = ih / iw if iw > 0 and ih > 0 else 1.0
             hspan = TWO_PI if N == 1 else (TWO_PI / N) * (1.0 + ws[i] / 2 + ws[(i + 1) % N] / 2)
             span = max(hspan * aspect * cfg.z_scale, 0.05)
-            horizon = max(cfg.sky_horizon, 0.0)
+            horizon = cfg.sky_horizon
             return self.M("MULTIPLY_ADD", self.el, 1.0 / span, -horizon / span, clamp=True)
-        bottom = max(cfg.sky_bottom, 0.0)
+        bottom = cfg.sky_bottom
         span = max(cfg.sky_top - bottom, 1e-3)
         return self.lazy("vfull", lambda: self.M("MULTIPLY_ADD", self.el, 1.0 / span,
                                                  -bottom / span, clamp=True, label="V"))
@@ -1283,6 +1283,10 @@ def _run_layer(scene, L, g, sync, ramps, culled=()):
     return t
 
 
+def ground_start(cfg):
+    return min(0.0, cfg.sky_bottom if cfg.vertical_mode == "FULL" else cfg.sky_horizon)
+
+
 def _run_top(scene, g, ls, sync):
     t = Tree(scene, g, sync)
     ins = top_inputs(ls)
@@ -1337,8 +1341,9 @@ def _run_top(scene, g, ls, sync):
                                 ("Cloud Occlusion", n.outputs["Cloud Coverage"] if overlays(L)
                                  else None)]))
     with t.section("Ground below the horizon  (Dome › Ground)"):
-        below = t.MR(dn.outputs["Elevation"], 0.0, -max(t.cfg.ground_blur, 1e-4), 0.0, 1.0,
-                     "SMOOTHSTEP", "BelowHorizon")
+        start = ground_start(t.cfg)
+        below = t.MR(dn.outputs["Elevation"], start, start - max(t.cfg.ground_blur, 1e-4), 0.0,
+                     1.0, "SMOOTHSTEP", "BelowHorizon")
         current = t.MIX(below, current, tuple(t.cfg.ground_color) + (1.0,), "MIX", "Ground")
     t.put(go.inputs["Color"], current)
     if not sync:

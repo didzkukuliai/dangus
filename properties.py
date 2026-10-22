@@ -380,7 +380,7 @@ class DG_Settings(bpy.types.PropertyGroup):
     edge_randomness: UNIT("Randomness", 1.0, subtype="FACTOR")
     edge_frequency: F("Frequency", 2.0, min=0.0, soft_max=10.0)
     edge_anisotropy: UNIT("Anisotropy", 1.0, subtype="FACTOR")
-    edge_low: F("Low", 0.3, "Pattern value where the seam is fully the left image",
+    edge_low: F("Low", 0.3, "Pattern value where the seam is fully the left image",s
                 soft_min=-1.0, soft_max=1.0)
     edge_high: F("High", 0.7, "Pattern value where the seam is fully the right image",
                  soft_min=-1.0, soft_max=1.0)
@@ -391,11 +391,11 @@ class DG_Settings(bpy.types.PropertyGroup):
                       ("ASPECT", "Keep Aspect", "Keep each image's proportions (e.g. 1 picture "
                        "tall, N around). Edge pixels extend above and below")], "Vertical", "FULL")
     sky_horizon: A("Horizon", 0.0, "Elevation where the bottom edge of the images sits",
-                   0.0, 89.0)
+                   -89.0, 89.0)
     z_scale: F("Z Scale", 1.0, "Vertical size multiplier in Keep Aspect mode", min=0.1,
                soft_max=4.0)
     sky_bottom: A("Bottom", 0.0, "Elevation mapped to the bottom edge of the images (the "
-                  "horizon at the most)", 0.0, 89.0)
+                  "horizon at the most)", -89.0, 89.0)
     sky_top: A("Top", 90.0, "Elevation mapped to the top edge of the images", 1.0, 90.0)
     ground_color: C("Ground", (0.02, 0.018, 0.015), "Below the horizon: the sky is a dome, "
                     "standing on this ground")
