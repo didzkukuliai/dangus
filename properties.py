@@ -380,7 +380,7 @@ class DG_Settings(bpy.types.PropertyGroup):
     edge_randomness: UNIT("Randomness", 1.0, subtype="FACTOR")
     edge_frequency: F("Frequency", 2.0, min=0.0, soft_max=10.0)
     edge_anisotropy: UNIT("Anisotropy", 1.0, subtype="FACTOR")
-    edge_low: F("Low", 0.3, "Pattern value where the seam is fully the left image",s
+    edge_low: F("Low", 0.3, "Pattern value where the seam is fully the left image",
                 soft_min=-1.0, soft_max=1.0)
     edge_high: F("High", 0.7, "Pattern value where the seam is fully the right image",
                  soft_min=-1.0, soft_max=1.0)
