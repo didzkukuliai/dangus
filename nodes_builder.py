@@ -1309,8 +1309,9 @@ def _run_top(scene, g, ls, sync):
     with t.section("View direction, used by every layer"):
         dn = t.group(static_group("dangus Direction", build_direction), "Direction")
     current, covers = (0.0, 0.0, 0.0, 1.0), []
-    order = [(i, L) for i, L in enumerate(ls) if L.kind != "SUN"] + [
-        (i, L) for i, L in enumerate(ls) if L.kind == "SUN"]
+    stack = list(enumerate(ls))[::-1]
+    order = [(i, L) for i, L in stack if L.kind != "SUN"] + [
+        (i, L) for i, L in stack if L.kind == "SUN"]
     for i, L in order:
         sun = L.kind == "SUN"
         label = "Layer %s: %s, %d%% opacity%s  (Sky Layers)" % (
@@ -1321,7 +1322,7 @@ def _run_top(scene, g, ls, sync):
             if sun:
                 for j, w, socks in covers:
                     for key, cov in socks:
-                        if j > i and cov is not None:
+                        if j < i and cov is not None:
                             b = t.M("MULTIPLY_ADD", cov, -w, 1.0, label="Not covered")
                             occ[key] = t.M("MULTIPLY", occ[key], b) if key in occ else b
                 occ = {k: t.M("SUBTRACT", 1.0, v, label=k) for k, v in occ.items()}
