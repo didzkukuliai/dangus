@@ -35,10 +35,14 @@ LAYER_KINDS = [
 
 
 MASK_KINDS = [
-    ("IMAGE", "Image", "Image mask, aligned with the item (layer masks use an equirect image)"),
-    ("NOISE", "Noise", "Procedural noise"),
-    ("VORONOI", "Voronoi", "Procedural cells"),
-    ("GRADIENT", "Gradient", "Fade by elevation above the horizon"),
+    ("IMAGE", "Image", "Image mask, aligned with the item (a layer mask wraps the image once "
+     "around the dome)", "NONE", 0),
+    ("NOISE", "Noise", "Soft fractal noise: cloudy, organic", "NONE", 1),
+    ("VORONOI", "Voronoi", "Cells: patchy, tiled", "NONE", 2),
+    ("WAVE", "Wave", "Bands: streaky, wind-swept", "NONE", 4),
+    ("MAGIC", "Magic", "Interference pattern: swirly", "NONE", 5),
+    ("GABOR", "Gabor", "Directional speckle: grainy, anisotropic", "NONE", 6),
+    ("GRADIENT", "Gradient", "Fade by elevation above the horizon", "NONE", 3),
 ]
 
 MASK_BLENDS = [
@@ -239,8 +243,14 @@ class DG_Mask(bpy.types.PropertyGroup):
     invert: B("Invert", False)
     intensity: UNIT("Intensity", 1.0)
     scale: F("Scale", 4.0, min=0.01, soft_max=50.0)
-    low: UNIT("Low", 0.0, "Values at or below this become 0")
-    high: UNIT("High", 1.0, "Values at or above this become 1")
+    detail: F("Detail", 2.0, min=0.0, max=15.0)
+    roughness: UNIT("Roughness", 0.5, subtype="FACTOR")
+    distortion: F("Distortion", 0.0, soft_min=-5.0, soft_max=10.0)
+    randomness: UNIT("Randomness", 1.0, subtype="FACTOR")
+    frequency: F("Frequency", 2.0, min=0.0, soft_max=10.0)
+    anisotropy: UNIT("Anisotropy", 1.0, subtype="FACTOR")
+    low: F("Low", 0.0, "Values at or below this become 0", soft_min=-1.0, soft_max=1.0)
+    high: F("High", 1.0, "Values at or above this become 1", soft_min=-1.0, soft_max=1.0)
     angle_from: A("From", -5.0, "Elevation where the mask is 0", -90.0, 90.0)
     angle_to: A("To", 25.0, "Elevation where the mask is 1", -90.0, 90.0)
     blend: E(MASK_BLENDS, "Combine", "MULTIPLY")

@@ -8,7 +8,8 @@ from bpy_extras.view3d_utils import region_2d_to_vector_3d
 from mathutils import Vector
 
 from . import bake, decals, live, nodes_builder, presets
-from .properties import ALPHA_SOURCES, KINDS, LAYER_KINDS, MASK_KINDS, MODIFIER_KINDS
+from .properties import (ALPHA_SOURCES, EDGE_LEVELS, KINDS, LAYER_KINDS, MASK_KINDS,
+                         MODIFIER_KINDS)
 from .utils import SUN_KINDS
 
 TARGETS = [("LAYER", "Layer", "Masks on the whole Sky Layer"),
@@ -252,7 +253,7 @@ def _add_items(op_, context, images, kind):
     layer.active_item = len(layer.items) - 1
 
 
-def _open_images(self, context):
+def _load_files(self):
     images = []
     for f in self.files:
         try:
@@ -260,7 +261,11 @@ def _open_images(self, context):
                                                check_existing=True))
         except RuntimeError as e:
             self.report({"WARNING"}, "Could not load %s: %s" % (f.name, e))
-    return _add_items(self, context, images, self.kind)
+    return images
+
+
+def _open_images(self, context):
+    return _add_items(self, context, _load_files(self), self.kind)
 
 
 def _image_items(self, context):
@@ -419,17 +424,44 @@ op("replace_image", "Replace Image",
 op("reload_image", "Reload Image", "Reload the active image from disk", _reload_image, _item_poll)
 
 
-def _add_mask(self, context):
-    st = mask_stack(context.scene.dangus, self.target)
+def _add_masks(op_, context, kind, images=(None,)):
+    st = mask_stack(context.scene.dangus, op_.target)
     if st is None:
-        self.report({"WARNING"}, "Nothing selected to mask")
+        op_.report({"WARNING"}, "Nothing selected to mask")
         return NO
-    if self.target == "LAYER" and self.kind == "IMAGE":
-        self.report({"ERROR"}, "Layers take Noise, Cells or Fade masks (images: per item)")
+    if not images:
         return NO
     owner = st[0]
-    owner.masks.add().kind = self.kind
+    for img in images:
+        m = owner.masks.add()
+        m.kind, m.image = kind, img
+        if kind == "IMAGE":
+            m.scale = 1.0
+        elif kind in EDGE_LEVELS:
+            m.low, m.high = EDGE_LEVELS[kind]
+            if kind == "VORONOI":
+                m.detail = 0.0
     owner.active_mask = len(owner.masks) - 1
+
+
+def _add_mask(self, context):
+    return _add_masks(self, context, self.kind)
+
+
+NEW_MASK_IMAGE = {"LAYER": 2048, "ITEM": 1024}
+
+
+def _new_mask_image_invoke(self, context, event):
+    self.name, self.width, self.height = "Mask", NEW_MASK_IMAGE[self.target], 1024
+    self.color, self.alpha = (1.0, 1.0, 1.0, 1.0), False
+    return context.window_manager.invoke_props_dialog(self, title="New Mask Image")
+
+
+def _new_mask_image(self, context):
+    img = bpy.data.images.new(self.name, self.width, self.height, alpha=self.alpha,
+                              float_buffer=self.float_buffer)
+    img.generated_type, img.generated_color = self.generated_type, self.color
+    return _add_masks(self, context, "IMAGE", [img])
 
 
 def _remove_mask(self, context):
@@ -472,6 +504,36 @@ def _owner():
 op("add_mask", "Add Mask", "Add a mask", _add_mask, _layer_poll,
    target=EnumProperty(items=TARGETS, default="LAYER"),
    kind=EnumProperty(items=MASK_KINDS, default="NOISE"))
+op("add_mask_image", "Open Mask Images", "Load one or more image files as masks",
+   lambda self, c: _add_masks(self, c, "IMAGE", _load_files(self)), _layer_poll, _fileselect,
+   directory=StringProperty(subtype="DIR_PATH", options=HIDDEN),
+   files=CollectionProperty(type=bpy.types.OperatorFileListElement, options=HIDDEN),
+   filter_image=BoolProperty(default=True, options=HIDDEN),
+   filter_folder=BoolProperty(default=True, options=HIDDEN),
+   target=EnumProperty(items=TARGETS, default="LAYER", options=HIDDEN))
+existing_mask = op("add_existing_mask_image", "Use Existing Image",
+                   "Use an image that is already loaded in this file as a mask",
+                   lambda self, c: _add_masks(self, c, "IMAGE", [
+                       i for i in [bpy.data.images.get(self.image)] if i]),
+                   _layer_poll, _search, image=EnumProperty(items=_image_items, name="Image"),
+                   target=EnumProperty(items=TARGETS, default="LAYER", options=HIDDEN))
+existing_mask.bl_property = "image"
+op("new_mask_image", "New Mask Image", "Create a new image and use it as a mask. It lives in "
+   "this file: paint it, then save or pack it",
+   _new_mask_image, _layer_poll, _new_mask_image_invoke,
+   target=EnumProperty(items=TARGETS, default="LAYER", options=HIDDEN),
+   name=StringProperty(name="Name", default="Mask"),
+   width=IntProperty(name="Width", min=1, max=16384, default=2048, subtype="PIXEL"),
+   height=IntProperty(name="Height", min=1, max=16384, default=1024, subtype="PIXEL"),
+   color=FloatVectorProperty(name="Color", subtype="COLOR_GAMMA", size=4, min=0.0, max=1.0,
+                             default=(1.0, 1.0, 1.0, 1.0)),
+   alpha=BoolProperty(name="Alpha", default=False, description="Give the image an alpha channel"),
+   generated_type=EnumProperty(name="Generated Type", default="BLANK", items=[
+       (e.identifier, e.name, e.description)
+       for e in bpy.types.Image.bl_rna.properties["generated_type"].enum_items]),
+   float_buffer=BoolProperty(name="32-bit Float", default=False,
+                             description="High dynamic range")
+   ).draw = _new_image_draw
 op("remove_mask", "Remove Mask", "Remove the active mask", _remove_mask, _layer_poll,
    target=EnumProperty(items=TARGETS, default="LAYER"))
 op("add_modifier", "Add Modifier", "Add a modifier at the bottom of the stack", _add_modifier,

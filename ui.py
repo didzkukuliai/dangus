@@ -3,7 +3,7 @@ import bpy
 from . import nodes_builder, presets
 from .bake import size as bake_size
 from .operators import active_item, active_layer, mask_stack
-from .properties import ALPHA_SOURCES, MODIFIER_KINDS
+from .properties import ALPHA_SOURCES, MASK_KINDS, MODIFIER_KINDS
 from .utils import VERSION, has_sky_nodes
 
 CLOUD_ICON, FOG_ICON = "OUTLINER_OB_VOLUME", "MOD_FLUID"
@@ -13,12 +13,15 @@ SUN_ICON = "LIGHT_SUN"
 LAYER_ICON = {"SKY": "RENDERLAYERS", "SUN": SUN_ICON}
 IMAGE_KINDS = ("SKY", "DECAL", "FOG", "SUN_IMAGE")
 MOD_ICON = {k: icon for k, _n, _d, icon, _i in MODIFIER_KINDS}
-MASK_ICON = {"IMAGE": "IMAGE_DATA", "NOISE": "FORCE_TURBULENCE",
-             "VORONOI": "MESH_GRID", "GRADIENT": "IPO_LINEAR"}
-MASK_LABEL = {"IMAGE": "Image", "NOISE": "Noise", "VORONOI": "Cells", "GRADIENT": "Fade"}
+PATTERN_ICON, GRADIENT_ICON = "TEXTURE", "IPO_EASE_OUT"
+NOISE_MASKS = ("NOISE", "VORONOI", "WAVE", "MAGIC", "GABOR")
+MASK_ICON = {"IMAGE": "IMAGE_DATA", "GRADIENT": GRADIENT_ICON,
+             **{k: PATTERN_ICON for k in NOISE_MASKS}}
+MASK_LABEL = {k: n for k, n, *_rest in MASK_KINDS}
 MASK_MOD_OWNER = {"LAYER": "LAYER_MASK", "ITEM": "ITEM_MASK"}
 SLIDERS = {"opacity", "softness", "blend_width", "intensity", "factor", "hue", "edge_roughness",
            "edge_randomness", "edge_anisotropy", "edge_softness", "fog_density",
+           "roughness", "randomness", "anisotropy",
            "cloud_scale", "sun_time", "sun_relight_amount", "sun_relight_disc_amount", "sun_night"}
 MOD_PROPS = {"BRIGHT_CONTRAST": ("bright", "contrast"),
              "HUE_SAT": ("hue", "saturation", "value"), "GAMMA": ("gamma",),
@@ -28,6 +31,7 @@ EDGE_PROPS = (("edge_detail", {"NOISE", "VORONOI", "WAVE"}),
               ("edge_roughness", {"NOISE", "VORONOI", "WAVE"}),
               ("edge_distortion", {"NOISE", "WAVE", "MAGIC"}), ("edge_randomness", {"VORONOI"}),
               ("edge_frequency", {"GABOR"}), ("edge_anisotropy", {"GABOR"}))
+MASK_PATTERN_PROPS = tuple((n[len("edge_"):], kinds) for n, kinds in EDGE_PROPS)
 
 
 SUN_LABEL = {"SUN_COLOR": "Solid Color"}
@@ -140,10 +144,28 @@ def _draw_add_layer(self, context):
         self.layout.operator("dangus.add_layer", text=title, icon=LAYER_ICON[kind]).kind = kind
 
 
+def _draw_add_mask(layout, target):
+    layout.label(text="Image", icon="IMAGE_DATA")
+    for op, text, icon in (("add_mask_image", "Open Image Files...", "FILEBROWSER"),
+                           ("add_existing_mask_image", "Use Existing Image...", "IMAGE_DATA"),
+                           ("new_mask_image", "New Image...", "FILE_NEW")):
+        layout.operator("dangus." + op, text=text, icon=icon).target = target
+    layout.separator()
+    layout.label(text="Noise", icon=PATTERN_ICON)
+    for kind in NOISE_MASKS:
+        op = layout.operator("dangus.add_mask", text=MASK_LABEL[kind])
+        op.target, op.kind = target, kind
+    layout.separator()
+    op = layout.operator("dangus.add_mask", text="Gradient", icon=GRADIENT_ICON)
+    op.target, op.kind = target, "GRADIENT"
+
+
 def _draw_add_layer_mask(self, context):
-    for kind in ("NOISE", "VORONOI", "GRADIENT"):
-        op = self.layout.operator("dangus.add_mask", text=MASK_LABEL[kind], icon=MASK_ICON[kind])
-        op.target, op.kind = "LAYER", kind
+    _draw_add_mask(self.layout, "LAYER")
+
+
+def _draw_add_item_mask(self, context):
+    _draw_add_mask(self.layout, "ITEM")
 
 
 def _draw_add_image(self, context):
@@ -216,10 +238,8 @@ def draw_masks(layout, context, cfg, target, ui):
     row = layout.row()
     row.template_list("DANGUS_UL_masks", target, owner, coll, owner, idx, rows=2)
     side = row.column(align=True)
-    if target == "LAYER":
-        side.menu("DANGUS_MT_add_layer_mask", text="", icon="ADD")
-    else:
-        side.operator_menu_enum("dangus.add_mask", "kind", text="", icon="ADD").target = target
+    side.menu("DANGUS_MT_add_layer_mask" if target == "LAYER" else "DANGUS_MT_add_item_mask",
+              text="", icon="ADD")
     side.operator("dangus.remove_mask", icon="REMOVE", text="").target = target
     masks, i = getattr(owner, coll), getattr(owner, idx)
     if not 0 <= i < len(masks):
@@ -229,6 +249,7 @@ def draw_masks(layout, context, cfg, target, ui):
     if m.kind == "IMAGE":
         col.template_ID(m, "image", open="image.open")
     props(col, m, ("angle_from", "angle_to") if m.kind == "GRADIENT" else "scale",
+          *(n for n, kinds in MASK_PATTERN_PROPS if m.kind in kinds),
           *(() if m.kind == "GRADIENT" else (("low", "high"),)), "intensity",
           *(("blend=Combine",) if i else ()))
     if toggle_row(col, ui, "show_mask_modifiers", "Mask Modifiers", "MODIFIER", len(m.modifiers)):
@@ -569,6 +590,7 @@ class DANGUS_PT_main(bpy.types.Panel):
 classes = (DANGUS_UL_layers, DANGUS_UL_items, DANGUS_UL_masks,
            menu("DANGUS_MT_add_layer", "New Layer", _draw_add_layer),
            menu("DANGUS_MT_add_layer_mask", "Add Layer Mask", _draw_add_layer_mask),
+           menu("DANGUS_MT_add_item_mask", "Add Mask", _draw_add_item_mask),
            menu("DANGUS_MT_add_image", "Add Image", _draw_add_image),
            menu("DANGUS_MT_item_specials", "Image", _draw_item_specials),
            menu("DANGUS_MT_alpha_source", "Alpha", _draw_alpha_source),

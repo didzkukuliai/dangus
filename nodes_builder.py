@@ -38,7 +38,7 @@ READABLE = {
     "DirZ": "Direction depth", "OriginZ": "Origin depth", "FogUV": "Fog image UV",
     "QSep": "Split image coordinates", "SunColor": "Sun colour", "SunLocal": "Sun-space direction",
     "TexMap": "Mapping", "SunMix": "", "Lum": "Luminance", "ModMix": "Modifier mix",
-    "FogFade": "Fog fade", "MaskNoise": "Mask: Noise", "MaskCells": "Mask: Cells",
+    "FogFade": "Fog fade", "MaskNoise": "Mask: Noise", "MaskVoronoi": "Mask: Voronoi",
     "SunLayer": "Sun layer", "Edge": "Edge", "Coverage": "Coverage", "EdgeSep": "Split the offset",
     "FromCentre": "Offset from the centre", "Feather": "Feather the edges (Softness)",
     "GlowReach": "Along this direction", "GlowImg": "Glow sample", "GlowSum": "Add up the glow",
@@ -363,34 +363,37 @@ class Tree:
     def softness(self):
         return max(self.cfg.edge_softness, 0.05)
 
+    def pattern(self, k, get, scale, coords, name, label):
+        spec = {"VORONOI": ("ShaderNodeTexVoronoi", "Distance",
+                            (("Detail", get("detail")), ("Roughness", get("roughness")),
+                             ("Randomness", get("randomness")))),
+                "WAVE": ("ShaderNodeTexWave", "Fac",
+                         (("Distortion", get("distortion")), ("Detail", get("detail")),
+                          ("Detail Roughness", get("roughness")))),
+                "MAGIC": ("ShaderNodeTexMagic", "Fac", (("Distortion", get("distortion")),)),
+                "GABOR": ("ShaderNodeTexGabor", "Value",
+                          (("Frequency", get("frequency")), ("Anisotropy", get("anisotropy")))),
+                "NOISE": ("ShaderNodeTexNoise", "Fac",
+                          (("Detail", get("detail")), ("Roughness", get("roughness")),
+                           ("Distortion", get("distortion"))))}[k]
+        n = self.node(spec[0], name + k.title(), label + k.title())
+        if k == "GABOR":
+            _set(n, "gabor_type", "3D")
+        elif k == "NOISE":
+            _set(n, "noise_dimensions", "3D")
+        for key, v in spec[2]:
+            _set(sk(n.inputs, key), "default_value", v)
+        self.put(sk(n.inputs, "Vector"), coords)
+        _set(sk(n.inputs, "Scale"), "default_value", scale)
+        return sk(n.outputs, spec[1])
+
     def seam_noise(self):
         def make():
             cfg = self.cfg
-            k = cfg.edge_noise
-            spec = {"VORONOI": ("ShaderNodeTexVoronoi", "Distance",
-                                (("Detail", cfg.edge_detail), ("Roughness", cfg.edge_roughness),
-                                 ("Randomness", cfg.edge_randomness))),
-                    "WAVE": ("ShaderNodeTexWave", "Fac",
-                             (("Distortion", cfg.edge_distortion), ("Detail", cfg.edge_detail),
-                              ("Detail Roughness", cfg.edge_roughness))),
-                    "MAGIC": ("ShaderNodeTexMagic", "Fac", (("Distortion", cfg.edge_distortion),)),
-                    "GABOR": ("ShaderNodeTexGabor", "Value",
-                              (("Frequency", cfg.edge_frequency),
-                               ("Anisotropy", cfg.edge_anisotropy))),
-                    "NOISE": ("ShaderNodeTexNoise", "Fac",
-                              (("Detail", cfg.edge_detail), ("Roughness", cfg.edge_roughness),
-                               ("Distortion", cfg.edge_distortion)))}[k]
-            n = self.node(spec[0], "Seam" + k.title(), "Seam pattern: " + k.title())
-            if k == "GABOR":
-                _set(n, "gabor_type", "3D")
-            elif k == "NOISE":
-                _set(n, "noise_dimensions", "3D")
-            for key, v in spec[2]:
-                _set(sk(n.inputs, key), "default_value", v)
-            self.put(sk(n.inputs, "Vector"), self.gen)
-            _set(sk(n.inputs, "Scale"), "default_value", cfg.noise_scale)
+            x = self.pattern(cfg.edge_noise, lambda a: getattr(cfg, "edge_" + a), cfg.noise_scale,
+                             self.gen, "Seam", "Seam pattern: ")
             hi = cfg.edge_low + max(cfg.edge_high - cfg.edge_low, 1e-3)
-            return self.MR(sk(n.outputs, spec[1]), cfg.edge_low, hi, 0.0, -1.0 / self.softness)
+            return self.MR(x, cfg.edge_low, hi, 0.0, -1.0 / self.softness)
         return self.lazy("seam", make)
 
     def equi_uv(self):
@@ -491,15 +494,8 @@ class Tree:
                     self.put(t.inputs["Vector"], self.V("SCALE", uv, m.scale, name="MaskMap"))
                     x = t.outputs["Color"]
                 else:
-                    idname = "ShaderNodeTexNoise" if m.kind == "NOISE" else "ShaderNodeTexVoronoi"
-                    t = self.node(idname, "MaskNoise" if m.kind == "NOISE" else "MaskCells",
-                                  "Mask: " + m.kind.title())
-                    if m.kind == "NOISE":
-                        _set(t, "noise_dimensions", "3D")
-                        _set(sk(t.inputs, "Detail"), "default_value", 2.0)
-                    self.put(sk(t.inputs, "Vector"), proc_coords)
-                    _set(sk(t.inputs, "Scale"), "default_value", m.scale)
-                    x = sk(t.outputs, "Fac") if m.kind == "NOISE" else t.outputs["Distance"]
+                    x = self.pattern(m.kind, lambda a, m=m: getattr(m, a), m.scale, proc_coords,
+                                     "Mask", "Mask: ")
                 f0, f1 = m.low, m.low + max(m.high - m.low, 1e-3)
             x = self.modifiers(m.modifiers, self.MR(x, f0, f1, lo, hi))
             acc = x if acc is None else self.M(m.blend, acc, x, clamp=m.blend != "MULTIPLY")
